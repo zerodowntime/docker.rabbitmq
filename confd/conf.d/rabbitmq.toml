@@ -1,0 +1,10 @@
+[template]
+src = "rabbitmq.conf"
+dest = "/etc/rabbitmq/rabbitmq.conf"
+keys = [
+    "/hostname",
+    "/rabbitmq",
+    "/memory/limit/in/bytes"
+]
+
+

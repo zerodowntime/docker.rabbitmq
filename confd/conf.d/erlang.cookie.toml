@@ -1,0 +1,11 @@
+[template]
+src = ".erlang.cookie"
+dest = "/var/lib/rabbitmq/.erlang.cookie"
+uid = 999
+gid = 998
+mode = "0400"
+keys = [
+    "/hostname",
+    "/rabbitmq",
+    "/cookie"
+]
