@@ -1,0 +1,4 @@
+[template]
+src = "enabled_plugins"
+dest = "/etc/rabbitmq/enabled_plugins"
+

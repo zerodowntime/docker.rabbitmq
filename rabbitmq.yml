@@ -1,0 +1,168 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rabbitmq-cfg
+  namespace: example
+data:
+  RABBITMQ_VM_MEMORY_HIGH_WATERMARK: "0.6"
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+  name: endpoint-reader
+  namespace: example
+rules:
+- apiGroups: [""]
+  resources: ["endpoints"]
+  verbs: ["get"]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+  name: endpoint-reader
+  namespace: example
+subjects:
+- kind: ServiceAccount
+  name: rabbitmq
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: endpoint-reader
+---
+kind: ServiceAccount
+metadata:
+  name: rabbitmq 
+  namespace: example
+apiVersion: v1
+---
+kind: Service
+apiVersion: v1
+metadata:
+  namespace: example 
+  name: rabbitmq-internal
+  labels:
+    app: rabbitmq
+spec:
+  clusterIP: None
+  ports:
+    - name: http
+      protocol: TCP
+      port: 15672
+    - name: amqp
+      protocol: TCP
+      port: 5672
+  selector:
+    app: rabbitmq  
+---
+kind: Service
+apiVersion: v1
+metadata:
+  namespace:  example
+  name: rabbitmq
+  labels:
+    app: rabbitmq
+    type: LoadBalancer
+spec:
+  selector:
+    app: rabbitmq
+  ports:
+   - name: rabbitmq-mgmt-port
+     protocol: TCP
+     port: 15672
+     targetPort: 15672
+   - name: rabbitmq-amqp-port
+     protocol: TCP
+     port: 5672
+     targetPort: 5672
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+  namespace: example
+spec:
+  serviceName: rabbitmq-internal
+  revisionHistoryLimit: 3
+  updateStrategy:
+    type: RollingUpdate
+  replicas: 3
+  selector: 
+    matchLabels:
+          app: rabbitmq
+  template:
+    metadata:
+      name: rabbitmq
+      labels:
+        app: rabbitmq
+    spec:
+      serviceAccountName: rabbitmq
+      terminationGracePeriodSeconds: 10
+      enableServiceLinks: false
+      containers:        
+      - name: rabbitmq
+        image: rabbitmq:v1
+        ports:
+        - containerPort: 4369
+        - containerPort: 5672
+        - containerPort: 25672
+        - containerPort: 15672
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "0.4"
+          limits:
+            memory: "256Mi"
+            cpu: "0.6"
+        livenessProbe:
+          exec:
+            command:
+              - /opt/liveness-probe.sh
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 3
+        readinessProbe:
+          exec:
+            command:
+              - /opt/readiness-probe.sh
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 3
+        envFrom:
+          - configMapRef:
+              name: rabbitmq-cfg
+        env:
+          - name: HOSTNAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: RABBITMQ_USE_LONGNAME
+            value: "true"
+          - name: RABBITMQ_NODENAME
+            value: "rabbit@$(HOSTNAME).rabbitmq-internal.$(NAMESPACE).svc.cluster.local"
+          - name: K8S_SERVICE_NAME
+            value: "rabbitmq-internal"
+            ####
+          - name: K8S_SERVICE_NAME
+            value: rabbitmq-internal
+          - name: MY_POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+
+          - name: K8S_HOSTNAME_SUFFIX
+            value: .$(K8S_SERVICE_NAME).$(MY_POD_NAMESPACE).svc.cluster.local
+          - name: RABBITMQ_DEFAULT_USER
+            value: admin
+          - name: RABBITMQ_DEFAULT_PASS
+            value: "1234"
+          #- name: RABBITMQ_ERLANG_COOKIE
+          #  value: secret_cookie
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name

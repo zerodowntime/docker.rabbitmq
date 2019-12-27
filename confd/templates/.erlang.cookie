@@ -1,1 +1,1 @@
-{{ getv "/cookie" "628WB79CIFDYO9LJI6DKMI09L" }}
+{{ getv "/rabbitmq/erlang/cookie" "628WB79CIFDYO9LJI6DKMI09L" }}
