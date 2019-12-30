@@ -20,10 +20,6 @@ COPY docker-entrypoint.sh /
 COPY liveness-probe.sh /opt/
 COPY readiness-probe.sh /opt/
 
-RUN chmod a+x /docker-entrypoint.sh
-RUN chmod a+x /opt/readiness-probe.sh
-RUN chmod a+x /opt/liveness-probe.sh
-
 ENV LANG=C.UTF-8 LANGUAGE=C.UTF-8 LC_ALL=en_US.UTF-8
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
