@@ -1,0 +1,7 @@
+[template]
+src = "advanced.config"
+dest = "/etc/rabbitmq/advanced.config"
+keys = [
+    "/rabbitmq"
+]
+

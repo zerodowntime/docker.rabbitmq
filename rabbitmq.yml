@@ -1,17 +1,15 @@
 ---
 apiVersion: v1
-kind: ConfigMap
+kind: ServiceAccount
 metadata:
-  name: rabbitmq-cfg
-  namespace: example
-data:
-  RABBITMQ_VM_MEMORY_HIGH_WATERMARK: "0.6"
+  name: rabbitmq
+  namespace: {{rabbitmq__configs_namespace}}
 ---
 kind: Role
 apiVersion: rbac.authorization.k8s.io/v1beta1
 metadata:
   name: endpoint-reader
-  namespace: example
+  namespace: {{rabbitmq__configs_namespace}}
 rules:
 - apiGroups: [""]
   resources: ["endpoints"]
@@ -21,7 +19,7 @@ kind: RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1beta1
 metadata:
   name: endpoint-reader
-  namespace: example
+  namespace: {{rabbitmq__configs_namespace}}
 subjects:
 - kind: ServiceAccount
   name: rabbitmq
@@ -30,139 +28,218 @@ roleRef:
   kind: Role
   name: endpoint-reader
 ---
-kind: ServiceAccount
-metadata:
-  name: rabbitmq 
-  namespace: example
-apiVersion: v1
----
 kind: Service
 apiVersion: v1
 metadata:
-  namespace: example 
-  name: rabbitmq-internal
+  namespace: {{rabbitmq__configs_namespace}}
+  name: rabbitmq-{{rabbitmq__configs_name}}
   labels:
-    app: rabbitmq
+    app: rabbitmq-{{rabbitmq__configs_name}}
 spec:
-  clusterIP: None
   ports:
-    - name: http
-      protocol: TCP
-      port: 15672
-    - name: amqp
-      protocol: TCP
-      port: 5672
+   - name: http
+     protocol: TCP
+     port: {{rabbitmq.configs.ports.http.port}}
+     targetPort: {{rabbitmq.configs.ports.http.port}}
+   - name: amqp
+     protocol: TCP
+     port: {{rabbitmq.configs.ports.tcp.port}}
+     targetPort: {{rabbitmq.configs.ports.tcp.port}}
   selector:
-    app: rabbitmq  
+    app: rabbitmq-{{rabbitmq__configs_name}}
+{% if rabbitmq.configs.console|default(False) %}
 ---
-kind: Service
-apiVersion: v1
+apiVersion: extensions/v1beta1
+kind: Ingress
 metadata:
-  namespace:  example
-  name: rabbitmq
-  labels:
-    app: rabbitmq
-    type: LoadBalancer
+  name: rabbitmq-{{rabbitmq__configs_name}}-console
+  namespace: {{rabbitmq__configs_namespace}}
 spec:
-  selector:
-    app: rabbitmq
-  ports:
-   - name: rabbitmq-mgmt-port
-     protocol: TCP
-     port: 15672
-     targetPort: 15672
-   - name: rabbitmq-amqp-port
-     protocol: TCP
-     port: 5672
-     targetPort: 5672
+  rules:
+  - host: {{rabbitmq.configs.console.domain}}
+    http:
+      paths:
+      - backend:
+          serviceName: rabbitmq-{{rabbitmq__configs_name}}
+          servicePort: {{rabbitmq.configs.ports.http.port}}
+{% endif %}
 ---
-apiVersion: apps/v1
+apiVersion: apps/v1beta1
 kind: StatefulSet
 metadata:
-  name: rabbitmq
-  namespace: example
+  name: rabbitmq-{{rabbitmq__configs_name}}
+  namespace: {{rabbitmq__configs_namespace}}
 spec:
-  serviceName: rabbitmq-internal
-  revisionHistoryLimit: 3
-  updateStrategy:
-    type: RollingUpdate
-  replicas: 3
-  selector: 
-    matchLabels:
-          app: rabbitmq
+  serviceName: rabbitmq-{{rabbitmq__configs_name}}
+  replicas: {{rabbitmq__configs_replicas}}
   template:
     metadata:
-      name: rabbitmq
-      labels:
-        app: rabbitmq
+      labels: {{ rabbitmq__statefulset_labels }}
+      # annotations:
+      #   prometheus.io/scrape: "true"
+      #   prometheus.io/port: "9090"
+
     spec:
       serviceAccountName: rabbitmq
       terminationGracePeriodSeconds: 10
-      enableServiceLinks: false
-      containers:        
-      - name: rabbitmq
-        image: rabbitmq:v1
+      affinity:
+{%      if rabbitmq__stateful_set_pod_affinity %}
+        podAffinity:
+          {{ rabbitmq__stateful_set_pod_affinity|to_nice_yaml(indent=2)|indent(10) }}
+{%      endif %}
+{%      if rabbitmq__stateful_set_pod_anti_affinity %}
+        podAntiAffinity:
+          {{ rabbitmq__stateful_set_pod_anti_affinity|to_nice_yaml(indent=2)|indent(10) }}
+{%      endif %}
+
+      containers:
+      - name: "{{ rabbitmq__container_name }}"
+        image: zerodowntime/rabbitmq:3.7
+        volumeMounts:
+          - mountPath: /var/lib/rabbitmq
+            name: rabbitmq-data
         ports:
-        - containerPort: 4369
-        - containerPort: 5672
-        - containerPort: 25672
-        - containerPort: 15672
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "0.4"
-          limits:
-            memory: "256Mi"
-            cpu: "0.6"
+          - name: http
+            protocol: TCP
+            containerPort: {{rabbitmq.configs.ports.http.port}}
+          - name: amqp
+            protocol: TCP
+            containerPort: {{rabbitmq.configs.ports.tcp.port}}
         livenessProbe:
           exec:
             command:
               - /opt/liveness-probe.sh
-          initialDelaySeconds: 20
+          initialDelaySeconds: 30
           periodSeconds: 10
-          timeoutSeconds: 3
+          timeoutSeconds: 5
         readinessProbe:
           exec:
             command:
               - /opt/readiness-probe.sh
-          initialDelaySeconds: 20
+          initialDelaySeconds: 30
           periodSeconds: 10
-          timeoutSeconds: 3
-        envFrom:
-          - configMapRef:
-              name: rabbitmq-cfg
+          timeoutSeconds: 10
+        imagePullPolicy: Always
         env:
-          - name: HOSTNAME
+          - name: MY_POD_NAME
             valueFrom:
               fieldRef:
+                apiVersion: v1
                 fieldPath: metadata.name
-          - name: NAMESPACE
+          - name: MY_POD_NAMESPACE
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
           - name: RABBITMQ_USE_LONGNAME
             value: "true"
+          # See a note on cluster_formation.k8s.address_type in the config file section
+          - name: K8S_SERVICE_NAME
+            value: rabbitmq-{{rabbitmq__configs_name}}
           - name: RABBITMQ_NODENAME
-            value: "rabbit@$(HOSTNAME).rabbitmq-internal.$(NAMESPACE).svc.cluster.local"
-          - name: K8S_SERVICE_NAME
-            value: "rabbitmq-internal"
-            ####
-          - name: K8S_SERVICE_NAME
-            value: rabbitmq-internal
-          - name: MY_POD_NAMESPACE
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.namespace
-
+            value: rabbit@$(MY_POD_NAME).$(K8S_SERVICE_NAME).$(MY_POD_NAMESPACE).svc.cluster.local
           - name: K8S_HOSTNAME_SUFFIX
             value: .$(K8S_SERVICE_NAME).$(MY_POD_NAMESPACE).svc.cluster.local
-          - name: RABBITMQ_DEFAULT_USER
-            value: admin
+          - name: RABBITMQ_ERLANG_COOKIE
+            value: "{{rabbitmq__configs_name|to_uuid}}"
+          - name: RABBITMQ_MONITORING_USER
+            value: "{{rabbitmq__configs_admin_user.login}}"
+          - name: RABBITMQ_MONITORING_PASS
+            value: "{{rabbitmq__configs_admin_user.password}}"
+          - name: RABBITMQ_DEFAULT_USER # has admin privileges
+            value: "{{rabbitmq__configs_admin_user.login}}"
           - name: RABBITMQ_DEFAULT_PASS
-            value: "1234"
-          #- name: RABBITMQ_ERLANG_COOKIE
-          #  value: secret_cookie
-          - name: NODE_NAME
+            value: "{{rabbitmq__configs_admin_user.password}}"
+          - name: RABBITMQ_LDAP_CONFIG
+            value: "true"
+          - name: RABBITMQ_LDAP_SERVER
+            value: "{{rabbitmq.configs.ldap.server}}"
+          - name: RABBITMQ_LDAP_USER_DN_PATTERN
+            value: "{{rabbitmq.configs.ldap.user_dn_pattern}}"
+          - name: RABBITMQ_LDAP_LOOKUP_ATTRIBUTE
+            value: "{{rabbitmq.configs.ldap.lookup.attribute}}"
+          - name: RABBITMQ_LDAP_LOOKUP_BASE
+            value: "{{rabbitmq.configs.ldap.lookup.base}}"
+          - name: RABBITMQ_LDAP_LOOKUP_BIND_USER_DN
+            value: "{{rabbitmq.configs.ldap.lookup.bind.user_dn}}"
+          - name: RABBITMQ_LDAP_LOOKUP_BIND_PASSWORD
+            value: "{{rabbitmq.configs.ldap.lookup.bind.password}}"
+          - name: RABBITMQ_LDAP_PERMISSIONS_VHOSTS_GROUP
+            value: "{{rabbitmq.configs.ldap.permissions.vhosts.group}}"
+          - name: RABBITMQ_LDAP_GROUPS_ADMINISTRATOR
+            value: "cn=devops_team,cn=groups,cn=compat,dc=edgemgmt,dc=relayr,dc=io"
+          - name: RABBITMQ_LDAP_GROUPS_MONITORING
+            value: "cn=rabbitmq_admin,cn=groups,cn=compat,dc=edgemgmt,dc=relayr,dc=io"
+        resources:
+          limits:
+            memory: "{{rabbitmq.configs.limits_memory}}"
+            cpu: "{{rabbitmq.configs.limits_cpu}}"
+          requests:
+            memory: "{{rabbitmq.configs.requests_memory}}"
+            cpu: "{{rabbitmq.configs.requests_cpu}}"
+  volumeClaimTemplates:
+    - metadata:
+        name: rabbitmq-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: "{{ rabbitmq__configs_storage_class }}"
+        resources:
+          requests:
+            storage: "{{ rabbitmq__configs_volume_size|int }}Gi"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rabbitmq-exporter-secret
+  namespace: {{rabbitmq__configs_namespace}}
+data:
+  username: "{{ rabbitmq__configs_exporter_username|b64encode }}"
+  password: "{{ rabbitmq__configs_exporter_password|b64encode }}"
+
+
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    app: rabbitmq-{{rabbitmq__configs_name}}-exporter
+  name: rabbitmq-{{rabbitmq__configs_name}}-exporter
+  namespace: {{rabbitmq__configs_namespace}}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rabbitmq-{{rabbitmq__configs_name}}-exporter
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9419"
+      labels:
+        app: rabbitmq-{{rabbitmq__configs_name}}-exporter
+    spec:
+      containers:
+      - name: rabbitmq-{{rabbitmq__configs_name}}-exporter
+        image: kbudde/rabbitmq-exporter
+        env:
+          - name: RABBIT_URL
+            value: "http://rabbitmq-{{ rabbitmq__configs_name }}:{{rabbitmq.configs.ports.http.port}}"
+          - name: RABBIT_USER
             valueFrom:
-              fieldRef:
-                fieldPath: metadata.name
+              secretKeyRef:
+                name: rabbitmq-exporter-secret
+                key: username
+          - name: RABBIT_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: rabbitmq-exporter-secret
+                key: password
+        ports:
+        - name: http
+          protocol: TCP
+          containerPort: 9419
+        resources:
+          limits:
+            memory: 200Mi
+          requests:
+            memory: 50Mi

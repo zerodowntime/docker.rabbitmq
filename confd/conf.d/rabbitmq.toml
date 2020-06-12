@@ -4,6 +4,7 @@ dest = "/etc/rabbitmq/rabbitmq.conf"
 keys = [
     "/hostname",
     "/rabbitmq",
+    "/k8s/",
     "/memory/limit/in/bytes"
 ]
 

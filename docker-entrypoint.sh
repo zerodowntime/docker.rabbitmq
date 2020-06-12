@@ -7,11 +7,7 @@ fi
 
 touch /var/lib/rabbitmq/.start
 
-export RABBITMQ_PEER_DISCOVERY_BACKEND=rabbit_peer_discovery_k8s
-export RABBITMQ_K8S_SERVICE_NAME=rabbitmq-internal
-
-confd -onetime -log-level debug || exit 2
-
-export RABBITMQ_LOGS=- # hyphen to print logs to stdout
+confd -onetime -log-level debug -backend env || exit 2
+chown -R rabbitmq:rabbitmq "$RABBITMQ_DATA_DIR"
 
 exec su-exec rabbitmq "$@"
